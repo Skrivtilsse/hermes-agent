@@ -434,14 +434,17 @@ def nonretryable_copy(
     return f"{body}\n\nProvider said: {summary}"
 
 
+# Next step once a stateful (non-reinvocable) provider may already have acted: no blind resend, no
+# /retry, no switch-provider advice. Shared by every surface that reports such a failure.
+NONREPLAYABLE_NEXT_STEP = (
+    "Hermes did not retry it automatically, because it may already have made changes. "
+    "Check what it changed before sending the request again."
+)
+
+
 def nonreplayable_failure_copy(*, label: str, summary: str) -> str:
-    """Chat copy for a failure after a stateful (non-reinvocable) provider started the request: it may
-    already have acted, so no blind resend, no retry, no switch-provider advice."""
-    return (
-        f"⚠️ {label} did not finish this request. Hermes did not retry it automatically, because it "
-        "may already have made changes. Check what it changed before sending the request again."
-        f"\n\nProvider said: {summary}"
-    )
+    """Chat copy for a failure after a stateful (non-reinvocable) provider started the request."""
+    return f"⚠️ {label} did not finish this request. {NONREPLAYABLE_NEXT_STEP}\n\nProvider said: {summary}"
 
 
 def content_policy_copy(*, label: str, summary: str) -> str:
