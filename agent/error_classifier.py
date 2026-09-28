@@ -690,6 +690,17 @@ class _Ctx:
         )
 
 
+def _reinvocation_refusal_verdict(c: _Ctx) -> Optional[Verdict]:
+    """A refused automatic reinvocation (agent/reinvocation_guard.py) is terminal wherever it is
+    classified: retrying, rotating, compressing or falling back would ask for the same refused call."""
+    from agent.reinvocation_guard import AutomaticReinvocationRefused
+
+    if isinstance(c.error, AutomaticReinvocationRefused):
+        return _v(_R.unknown, retryable=False, should_fallback=False, should_compress=False,
+                  should_rotate_credential=False)
+    return None
+
+
 def _plugin_verdict(c: _Ctx) -> Optional[Verdict]:
     """First valid plugin classification (runs before the built-in pipeline so a
     provider plugin can add or correct verdicts). invoke_hook isolates callback
@@ -944,11 +955,11 @@ def _by_status(c: _Ctx) -> Optional[Verdict]:
     return _STATUS_HANDLERS[status](c) if status in _STATUS_HANDLERS else default
 
 
-# Stage order: plugin hooks → the provider's own profile hook → provider-specific special cases →
+# Stage order: a refused automatic reinvocation → plugin hooks → the provider's own profile hook → provider-specific special cases →
 # HTTP status → MoA shapes → structured error code → message patterns → SSL → disconnect +
 # large session → transport types → unknown (retryable with backoff).
 _STAGES: Sequence[Callable[[_Ctx], Optional[Verdict]]] = (
-    _plugin_verdict, _profile_verdict, _provider_special_cases, _by_status, _moa_special_cases,
+    _reinvocation_refusal_verdict, _plugin_verdict, _profile_verdict, _provider_special_cases, _by_status, _moa_special_cases,
     _by_error_code, _by_message, _by_transport,
 )
 

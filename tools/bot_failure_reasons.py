@@ -55,6 +55,20 @@ RETRY_COMPRESS_THEN_RESUME = "compress_then_resume"
 RETRY_NONE = "none"
 
 
+# A turn that started a provider which does not support automatic reinvocation (a stateful execution
+# parent, agent/reinvocation_guard.py) is never re-run automatically, whatever the failure class: the
+# re-run would replay work that may already have happened. In-process lanes read the result field;
+# the child-process lanes read this marker line, which ``hermes -Q`` prints to stderr for such turns.
+NONREPLAYABLE_TURN_MARKER = "hermes-nonreplayable-invocation: started"
+
+
+def failure_text_retry_action(text: str) -> str:
+    """Retry action for a failed child-process turn from its failure text (both streams)."""
+    if NONREPLAYABLE_TURN_MARKER in str(text or ""):
+        return RETRY_NONE
+    return retry_action(classify_agent_error(text))
+
+
 def retry_action(reason: str) -> str:
     """Map a failure reason to the bot-turn retry action (see policy above)."""
     if reason in AUTO_RETRYABLE:
@@ -106,6 +120,10 @@ def result_retry_action(result: Any) -> str:
     describes in prose. ``RETRY_NONE`` for anything that did not fail (and for a non-dict result), so a
     successful turn whose text happens to mention 429 is never re-run."""
     if not isinstance(result, dict) or not result.get("failed"):
+        return RETRY_NONE
+    from agent.reinvocation_guard import NONREPLAYABLE_INVOCATION_STARTED
+
+    if result.get(NONREPLAYABLE_INVOCATION_STARTED):
         return RETRY_NONE
     return retry_action(classify_agent_error(
         turn_failure_text(result.get("error"), result.get("failure_reason"))))

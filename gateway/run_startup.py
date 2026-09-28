@@ -572,6 +572,33 @@ class GatewayStartupMixin:
             logger.warning("Skipping auto-resume for %s: authorization check failed: %s", session_key, exc)
         return False
 
+    def _resume_would_replay_stateful_provider(self, session_key: str, source) -> bool:
+        """True when the session's provider does not support automatic reinvocation (a stateful
+        execution parent, agent/reinvocation_guard.py): its interrupted turn may already have acted, so
+        the gateway never re-runs it by itself. The session stays ``resume_pending``; the user's next
+        explicit message carries the recovery note. A runtime that cannot be resolved here could not be
+        invoked by the resume turn either, so that case keeps today's behaviour."""
+        from agent.reinvocation_guard import supports_automatic_reinvocation
+
+        # Resolution clears the runner-wide pre-agent notice; keep any notice another turn has stashed.
+        stashed_notice = getattr(self, "_pre_agent_fallback_notice", None)
+        try:
+            _model, runtime = self._resolve_session_agent_runtime(source=source, session_key=session_key)
+            provider = str((runtime or {}).get("provider") or "")
+        except Exception as exc:  # noqa: BLE001 — see docstring
+            logger.debug("auto-resume provider check for %s skipped: %s", session_key, exc)
+            return False
+        finally:
+            self._pre_agent_fallback_notice = stashed_notice
+        if supports_automatic_reinvocation(provider):
+            return False
+        logger.warning(
+            "Skipping auto-resume for %s: provider %s does not support automatic reinvocation; the "
+            "interrupted turn may already have acted, so it waits for the user's next message",
+            session_key, provider,
+        )
+        return True
+
     def _schedule_resume_pending_sessions(self, platform=None) -> int:
         """Auto-continue fresh restart-interrupted sessions: synthesize an empty-text turn (the
         ``_is_resume_pending`` injection path owns the wording). Sessions whose adapter is offline stay
@@ -600,6 +627,8 @@ class GatewayStartupMixin:
                 )
                 continue
             if not self._resume_owner_authorized(entry.session_key, source):
+                continue
+            if self._resume_would_replay_stateful_provider(entry.session_key, source):
                 continue
             # Claim the slot *before* spawning so an inbound message arriving before the task's first
             # await queues instead of building a duplicate AIAgent.
