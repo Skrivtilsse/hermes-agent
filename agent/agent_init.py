@@ -1070,7 +1070,9 @@ def effective_enabled_toolsets(agent, enabled_toolsets):
 
 def _load_tools(agent, enabled_toolsets, disabled_toolsets):
     # The empty selection of a model that declares no tools also gates the memory-provider and
-    # context-engine appenders that run later, through their existing enabled_toolsets checks.
+    # context-engine appenders that run later, through their existing enabled_toolsets checks. The
+    # requested selection is kept so a later model switch can narrow it again for the new model.
+    agent._requested_enabled_toolsets = enabled_toolsets
     enabled_toolsets = agent.enabled_toolsets = effective_enabled_toolsets(agent, enabled_toolsets)
     # A multiplexed gateway may have switched HERMES_HOME since model_tools was imported;
     # make sure this profile's plugins are discovered before the tool snapshot.

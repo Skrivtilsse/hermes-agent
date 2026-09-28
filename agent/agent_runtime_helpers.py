@@ -2277,6 +2277,20 @@ def _persist_switch_billing_route(agent) -> None:
         logger.warning("Failed to persist billing route after model switch", exc_info=True)
 
 
+def _refresh_tools_for_switched_model(agent) -> None:
+    """Re-derive the tool snapshot for the model just switched to: a model that declares it takes no
+    tools gets none, a switch back to a tools-capable model restores the requested selection. A failed
+    rebuild never leaves tools offered to a model that takes none."""
+    try:
+        from tools.mcp_tool_agent import refresh_agent_mcp_tools
+        refresh_agent_mcp_tools(agent)
+    except Exception:
+        logger.warning("switch_model: tool refresh for %s failed", agent.model, exc_info=True)
+        from agent.agent_init import effective_enabled_toolsets
+        if effective_enabled_toolsets(agent, None) == []:
+            agent.tools, agent.valid_tool_names, agent.enabled_toolsets = [], set(), []
+
+
 def switch_model(
     agent, new_model, new_provider, api_key='', base_url='', api_mode='', capabilities=None
 ):
@@ -2305,6 +2319,8 @@ def switch_model(
     except Exception:
         _restore_switch_snapshot(agent, snapshot)
         raise
+    # Tool exposure follows the destination model's own declaration before the next request.
+    _refresh_tools_for_switched_model(agent)
     custom_providers, effective_context_length = _resolve_switch_context_length(agent, snapshot)
     # Refresh the custom-provider snapshot from the config just loaded so the prompt_caching lookup
     # sees flags added to config.yaml after session start.

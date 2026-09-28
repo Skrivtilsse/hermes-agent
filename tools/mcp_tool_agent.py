@@ -29,18 +29,31 @@ def agent_tool_names(agent) -> list:
     return [name for name in map(_def_name, _agent_tool_defs(agent)) if name]
 
 
+def _requested_toolsets(agent):
+    """The selection the agent was asked for, before a model that takes no tools narrowed it to ``[]``
+    (``agent_init._load_tools`` records it), so a switch back to a tools-capable model restores it.
+    Agents built without ``_load_tools`` keep using their current selection."""
+    recorded = getattr(agent, "__dict__", {})
+    if "_requested_enabled_toolsets" in recorded:
+        return recorded["_requested_enabled_toolsets"]
+    return getattr(agent, "enabled_toolsets", None)
+
+
 def _resolve_refresh_toolsets(agent, enabled_override, disabled_override):
     """Explicit reloads pass freshly-resolved toolsets (so a server just ENABLED in config is
     picked up) and the agent's selection is updated to match; automatic paths pass nothing
     and reuse the build-time selection."""
     from agent.agent_init import effective_enabled_toolsets
-    enabled = getattr(agent, "enabled_toolsets", None)
+    requested = _requested_toolsets(agent)
     disabled = getattr(agent, "disabled_toolsets", None)
     if enabled_override is not None or disabled_override is not None:
-        enabled = enabled_override if enabled_override is not None else enabled
+        requested = enabled_override if enabled_override is not None else requested
         disabled = disabled_override if disabled_override is not None else disabled
-        # A reload never re-offers tools to a model that declares it takes none.
-        enabled = effective_enabled_toolsets(agent, enabled)
+        agent._requested_enabled_toolsets = requested
+    # Narrowed for the agent's CURRENT provider/model: a reload never re-offers tools to a model that
+    # declares it takes none, and a switch back to a tools-capable model gets its tools again.
+    enabled = effective_enabled_toolsets(agent, requested)
+    if enabled_override is not None or disabled_override is not None or enabled != getattr(agent, "enabled_toolsets", None):
         agent.enabled_toolsets, agent.disabled_toolsets = enabled, disabled
     return enabled, disabled
 
