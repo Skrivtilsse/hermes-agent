@@ -2916,9 +2916,15 @@ def _codex_base_url_override() -> str:
     return _scoped_key_env("HERMES_CODEX_BASE_URL").rstrip("/")
 
 
-def _build_codex_client(model: str) -> Tuple[Optional[Any], Optional[str]]:
+def _build_codex_client(
+    model: str, live_runtime: Optional[Tuple[str, str]] = None,
+) -> Tuple[Optional[Any], Optional[str]]:
     """CodexAuxiliaryClient for an explicit model; (None, None) without a Codex OAuth token.
 
+    ``live_runtime`` is a caller's live ``(bearer, base_url)`` Codex pair (e.g. a delegated child's
+    runtime), used as one unit and only when this profile's pool/auth store holds no Codex token: the
+    store is what refresh and pool rotation keep current, so a rediscoverable token always wins over
+    a caller's possibly stale snapshot.
     No auto-selected default: the Codex model allow-list is undocumented and drifts.
     """
     if not model:
@@ -2934,9 +2940,12 @@ def _build_codex_client(model: str) -> Tuple[Optional[Any], Optional[str]]:
         base_url = codex_override or _pool_runtime_base_url(entry, _CODEX_AUX_BASE_URL) or _CODEX_AUX_BASE_URL
     else:
         codex_token = _read_codex_access_token()
-        if not codex_token:
+        if codex_token:
+            base_url = codex_override or _CODEX_AUX_BASE_URL
+        elif live_runtime:
+            codex_token, base_url = live_runtime
+        else:
             return None, None
-        base_url = codex_override or _CODEX_AUX_BASE_URL
     logger.debug("Auxiliary client: Codex OAuth (%s via Responses API)", model)
     real_client = _create_openai_client(
         api_key=codex_token, base_url=base_url,
@@ -4508,8 +4517,10 @@ def _main_route_target(runtime: Dict[str, Any], task: Optional[str]) -> Tuple[st
 
 def _try_main_provider_route(
     main_provider: str, main_model: str, runtime_base_url: str, runtime_api_key: Any, runtime_api_mode: str,
+    main_runtime: Optional[Dict[str, Any]] = None,
 ) -> Optional[Tuple[Any, str, str]]:
-    """Step 1: route aux onto the main provider + main model; None if unusable."""
+    """Step 1: route aux onto the main provider + main model; None if unusable. ``main_runtime`` is the
+    resolved runtime those values came from (the Codex branch proves its bearer/base_url pair against it)."""
     if not (main_provider and main_model and main_provider not in {"auto", ""}):
         return None
     resolved_provider = main_provider
@@ -4547,6 +4558,8 @@ def _try_main_provider_route(
     client, resolved = resolve_provider_client(
         resolved_provider, main_model, explicit_base_url=explicit_base_url,
         explicit_api_key=explicit_api_key, api_mode=runtime_api_mode or None,
+        # Only the Codex branch consumes it here; other branches read main_runtime for unrelated routing.
+        main_runtime=main_runtime if resolved_provider == "openai-codex" else None,
     )
     if client is None:
         return None
@@ -4606,7 +4619,7 @@ def _resolve_auto_route(
     runtime = _normalize_main_runtime(main_runtime)
     _warn_stale_openai_base_url(runtime.get("provider", ""))
     main_provider, main_model, base_url, api_key, api_mode = _main_route_target(runtime, task)
-    routed = _try_main_provider_route(main_provider, main_model, base_url, api_key, api_mode)
+    routed = _try_main_provider_route(main_provider, main_model, base_url, api_key, api_mode, runtime)
     if routed is not None:
         return routed
     if task:
@@ -4984,7 +4997,24 @@ def _resolve_openai_codex_branch(req: _ResolveRequest) -> _ResolveResult:
         raw_client = _create_openai_client(api_key=codex_token, base_url=base_url,
                                            default_headers=_codex_cloudflare_headers(codex_token, base_url=base_url))
         return raw_client, _normalize_resolved_model(model, req.provider)
-    client, default = _build_codex_client(model)
+    # Main-route Step 1 hands over the live Codex runtime it came from: its bearer is a candidate only
+    # when bearer, base_url and codex_responses are exactly that runtime's own pair. Presence alone
+    # proves nothing (_get_cached_client pairs a pool bearer with a configured base_url); any other
+    # combination is ignored. _build_codex_client still prefers the profile's own token.
+    runtime = _normalize_main_runtime(req.main_runtime) if req.main_runtime else {}
+    live_key = _normalize_api_key(req.explicit_api_key)
+    live_base = str(req.explicit_base_url or "").strip().rstrip("/")
+    live_runtime = (
+        (live_key, live_base)
+        if isinstance(live_key, str) and live_key and live_base
+        and req.api_mode == "codex_responses"
+        and runtime.get("provider") == "openai-codex"
+        and runtime.get("api_mode") == "codex_responses"
+        and runtime.get("api_key") == live_key
+        and str(runtime.get("base_url") or "").rstrip("/") == live_base
+        else None
+    )
+    client, default = _build_codex_client(model, live_runtime)
     return _route_or_warn(req, client, default, no_token_msg)
 
 

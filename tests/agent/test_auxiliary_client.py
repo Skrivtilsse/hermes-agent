@@ -734,6 +734,109 @@ class TestBuildCodexClient:
         assert model == "gpt-5.4"
         assert mock_openai.call_args.kwargs["base_url"] == "http://127.0.0.1:8787/v1"
 
+    @staticmethod
+    def _recording_codex_openai(sent):
+        """OpenAI stand-in whose Responses stream answers one summary and records the bearer/URL sent."""
+        def _openai(*, api_key, base_url, **_kwargs):
+            item = SimpleNamespace(type="message", content=[SimpleNamespace(type="output_text", text="the summary")])
+            events = [
+                SimpleNamespace(type="response.output_item.done", item=item),
+                SimpleNamespace(type="response.completed", response=SimpleNamespace(status="completed", id="r1", usage=None)),
+            ]
+
+            class _Stream:
+                def __iter__(self): return iter(events)
+                def close(self): pass
+
+            def _create(**_request):
+                sent.append((api_key, base_url))
+                return _Stream()
+
+            return SimpleNamespace(api_key=api_key, base_url=base_url,
+                                   responses=SimpleNamespace(create=_create), close=lambda: None)
+        return _openai
+
+    @pytest.mark.parametrize("pool_token, expected", [
+        (None, ("snapshot-bearer", "http://127.0.0.1:8787/v1")),
+        ("rotated-pool-token", ("rotated-pool-token", "https://chatgpt.com/backend-api/codex")),
+    ], ids=["nested-child-without-profile-token", "after-refresh-or-rotation"])
+    def test_compression_summary_sends_the_current_codex_credential(self, pool_token, expected):
+        """The compressor's summary call (compression=auto, openai-codex main runtime). A nested child whose
+        profile holds no Codex token reuses its live runtime pair; once refresh/rotation has put a token in
+        the profile's store, that token wins over the compressor's (then stale) runtime snapshot."""
+        from agent.context_compressor import ContextCompressor
+
+        entry = SimpleNamespace(
+            runtime_api_key=pool_token, runtime_base_url="https://chatgpt.com/backend-api/codex",
+        ) if pool_token else None
+        compressor = ContextCompressor(
+            model="gpt-6-luna", provider="openai-codex", api_key="snapshot-bearer",
+            base_url="http://127.0.0.1:8787/v1", api_mode="codex_responses",
+            config_context_length=272000, quiet_mode=True,
+        )
+        sent = []
+        with (
+            patch("agent.auxiliary_client._select_pool_entry", return_value=(entry is not None, entry)),
+            patch("agent.auxiliary_client._peek_pool_entry", return_value=entry),
+            patch("hermes_cli.auth._read_codex_tokens", return_value={}),
+            patch("agent.auxiliary_client.OpenAI", side_effect=self._recording_codex_openai(sent)),
+        ):
+            summary = compressor._call_summary_llm("Summarize this conversation.", time.monotonic())
+
+        assert summary == "the summary"
+        assert sent == [expected]
+
+    @pytest.mark.parametrize("pool_token", ["codex-pool-token", None])
+    def test_explicit_codex_aux_config_never_sends_a_bearer_to_the_configured_url(self, pool_token):
+        """auxiliary.<task> openai-codex + base_url + codex_responses whose key is not the main runtime's own
+        pair: the pool bearer _get_cached_client peeks stays on the pool's endpoint, and a configured key
+        with no profile token fails closed instead of reaching the configured URL."""
+        import agent.auxiliary_client as aux
+
+        entry = SimpleNamespace(
+            runtime_api_key=pool_token, runtime_base_url="https://chatgpt.com/backend-api/codex",
+        ) if pool_token else None
+        with (
+            patch("agent.auxiliary_client._peek_pool_entry", return_value=entry),
+            patch("agent.auxiliary_client._select_pool_entry", return_value=(entry is not None, entry)),
+            patch("hermes_cli.auth._read_codex_tokens", return_value={}),
+            patch("agent.auxiliary_client.OpenAI") as mock_openai,
+        ):
+            mock_openai.return_value = MagicMock()
+            client, _ = aux._get_cached_client(
+                "openai-codex", "gpt-6-luna", base_url="https://configured.example/v1",
+                api_key=None if pool_token else "configured-key", api_mode="codex_responses",
+                main_runtime={},
+            )
+
+        if pool_token:
+            assert isinstance(client, CodexAuxiliaryClient)
+            assert mock_openai.call_args.kwargs["api_key"] == "codex-pool-token"
+            assert mock_openai.call_args.kwargs["base_url"] == "https://chatgpt.com/backend-api/codex"
+        else:
+            assert client is None
+            mock_openai.assert_not_called()
+
+    @pytest.mark.parametrize("base_url, api_mode", [
+        (None, "codex_responses"),
+        ("http://127.0.0.1:8787/v1", "chat_completions"),
+        ("http://127.0.0.1:8787/v1", None),
+    ])
+    def test_live_codex_runtime_without_full_pairing_is_never_reused(self, base_url, api_mode):
+        """A runtime bearer without its base_url AND codex_responses is never sent (not to the default
+        Codex host, not to the runtime URL); with no profile token the aux route fails closed."""
+        runtime = {"provider": "openai-codex", "model": "gpt-6-luna", "api_key": "child-live-bearer"}
+        runtime.update({k: v for k, v in (("base_url", base_url), ("api_mode", api_mode)) if v})
+        with (
+            patch("agent.auxiliary_client._select_pool_entry", return_value=(False, None)),
+            patch("hermes_cli.auth._read_codex_tokens", return_value={}),
+            patch("agent.auxiliary_client.OpenAI") as mock_openai,
+        ):
+            client, model = get_text_auxiliary_client("compression", main_runtime=runtime)
+
+        assert (client, model) == (None, None)
+        mock_openai.assert_not_called()
+
     def test_rejects_missing_model(self):
         """Callers must pass an explicit model; no hardcoded default."""
         from agent.auxiliary_client import _build_codex_client
