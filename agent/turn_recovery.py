@@ -776,7 +776,7 @@ def nonreplayable_failure_result(
     from dataclasses import replace
 
     from agent.reinvocation_guard import original_failure
-    from agent.turn_failure_copy import nonreplayable_failure_copy
+    from agent.turn_failure_copy import nonreplayable_failure_copy, strip_replay_advice
 
     shown = original_failure(api_error)
     classified = replace(classify_api_error(
@@ -784,7 +784,8 @@ def nonreplayable_failure_result(
         base_url=str(getattr(agent, "base_url", "") or ""),
     ), retryable=False, should_fallback=False, should_compress=False, should_rotate_credential=False)
     agent._flush_status_buffer()
-    summary = agent._summarize_api_error(shown)
+    # The diagnostic survives; any retry advice inside the provider's own text does not.
+    summary = strip_replay_advice(agent._summarize_api_error(shown))
     label = provider_label_for(getattr(agent, "provider", ""))
     agent._emit_diagnostic_status(f"❌ {label} failed after it started; not retried automatically: {summary}")
     logger.error("%sNon-replayable provider failed after invocation began; turn ends without retry: %s",

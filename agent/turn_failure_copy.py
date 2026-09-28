@@ -9,6 +9,7 @@ trailing "Provider said:" / "Details:" line.
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any, Dict, NamedTuple, Optional, Tuple
 
@@ -440,6 +441,23 @@ NONREPLAYABLE_NEXT_STEP = (
     "Hermes did not retry it automatically, because it may already have made changes. "
     "Check what it changed before sending the request again."
 )
+
+
+# A provider's own diagnostic can carry recovery advice ("This is usually transient; retry in a
+# minute"). After a stateful provider started, that advice invites a blind replay: the sentences that
+# carry it are dropped, the diagnostic ones kept (the full text stays in the log).
+_REPLAY_ADVICE_RE = re.compile(
+    r"\b(?:re-?try|try (?:it |this |the request )?again|re-?run|re-?send|send (?:it|this|the request) again"
+    r"|fall ?back|backup provider|switch (?:models?|providers?))\b|/retry",
+    re.IGNORECASE,
+)
+
+
+def strip_replay_advice(text: str) -> str:
+    """``text`` without the sentences that recommend retrying, resending or falling back."""
+    sentences = re.split(r"(?<=[.!?])\s+", str(text or "").strip())
+    kept = [s for s in sentences if s and not _REPLAY_ADVICE_RE.search(s)]
+    return " ".join(kept) if kept else "(the provider's retry advice was withheld)"
 
 
 def nonreplayable_failure_copy(*, label: str, summary: str) -> str:
