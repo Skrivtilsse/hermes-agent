@@ -487,7 +487,12 @@ def _validate_child_output_schema(
     from tools.delegation_output_schema import build_retry_message, validate_output
     _first_text = result.get("final_response") or ""
     _schema_valid, _schema_errors = validate_output(_first_text, _output_schema)
-    if _schema_valid or not _first_text.strip() or result.get("interrupted", False):
+    from agent.turn_failure_copy import result_may_have_effects
+    # A FAILED turn that started a provider which does not support automatic reinvocation is never
+    # followed up automatically: its failure text fails the schema, and the retry turn would re-run
+    # the same delegated action on a provider that may already have acted.
+    _replay = bool(result.get("failed")) and result_may_have_effects(result)
+    if _schema_valid or not _first_text.strip() or result.get("interrupted", False) or _replay:
         return _SchemaOutcome(_output_schema, _schema_valid, _schema_errors, 0)
 
     # Exactly one retry turn, carrying the validation errors verbatim (no
