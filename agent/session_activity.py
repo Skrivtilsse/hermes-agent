@@ -28,6 +28,8 @@ class ActivityProvenance(str, Enum):
     AGENT_COMPRESSION_TIMEOUT = "agent.compression_timeout"
     AGENT_COMPRESSION_COOLDOWN = "agent.compression_cooldown"
     AGENT_COMPRESSION_TURNHOLD = "agent.compression_turnhold"
+    # A provider reporting its own progress mid-request (e.g. an agent process's tool calls).
+    PROVIDER_PROGRESS = "provider.progress"
 
 
 def bound_activity_description(description: Optional[str]) -> str:
