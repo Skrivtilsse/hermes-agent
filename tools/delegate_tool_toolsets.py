@@ -83,8 +83,11 @@ def _resolve_child_toolsets(
     ``disabled_toolsets`` so blocked names inside mixed bundles (hermes-cli) are subtracted AFTER composite
     expansion and survive registry refreshes. Orchestrators get ``delegation`` re-added unconditionally
     (role-granted, not inherited)."""
-    # enabled_toolsets=None means "all tools", so derive from loaded tool names.
-    parent_enabled = getattr(parent_agent, "enabled_toolsets", None)
+    # enabled_toolsets=None means "all tools", so derive from loaded tool names. The parent's REQUESTED
+    # selection is the scope: a parent whose own model takes no tools has an empty effective set, which says
+    # nothing about what a child on another model may use (the child applies its own declaration).
+    from agent.agent_init import requested_enabled_toolsets
+    parent_enabled = requested_enabled_toolsets(parent_agent) if parent_agent is not None else None
     if parent_enabled is not None:
         parent_toolsets = set(parent_enabled)
     elif parent_agent and hasattr(parent_agent, "valid_tool_names"):
