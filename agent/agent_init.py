@@ -1057,7 +1057,21 @@ def _init_fallback_chain(agent, fallback_model):
             print(f"🔄 Fallback chain ({len(chain)} providers): " + " → ".join(labels))
 
 
+def effective_enabled_toolsets(agent, enabled_toolsets):
+    """``enabled_toolsets`` narrowed by the main model's own declaration: ``[]`` (no toolset) when the
+    provider's ``model_capabilities`` or the user's ``model_overrides`` declares ``supports_tools: false``
+    for this model, so no Hermes tool is offered to a model that takes none; unchanged otherwise."""
+    from agent.models_dev import declared_tool_support
+    provider, model = (str(getattr(agent, name, "") or "") for name in ("provider", "model"))
+    if declared_tool_support(provider, model) is False:
+        return []
+    return enabled_toolsets
+
+
 def _load_tools(agent, enabled_toolsets, disabled_toolsets):
+    # The empty selection of a model that declares no tools also gates the memory-provider and
+    # context-engine appenders that run later, through their existing enabled_toolsets checks.
+    enabled_toolsets = agent.enabled_toolsets = effective_enabled_toolsets(agent, enabled_toolsets)
     # A multiplexed gateway may have switched HERMES_HOME since model_tools was imported;
     # make sure this profile's plugins are discovered before the tool snapshot.
     try:

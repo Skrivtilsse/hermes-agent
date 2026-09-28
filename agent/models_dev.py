@@ -739,6 +739,18 @@ def _override_context_window(provider: str, model: str) -> Optional[int]:
     return _override_int(ov, "context_window") if ov is not None else None
 
 
+def declared_tool_support(provider: str, model: str) -> Optional[bool]:
+    """EXPLICITLY declared ``supports_tools`` for provider+model, or None when nothing declares it: the
+    user's ``model_overrides`` entry wins, then the registered ``ProviderProfile.model_capabilities``.
+    Explicit-only on purpose: a catalog entry that omits or misstates ``tool_call`` must never strip a
+    main agent's tools; only a declaration can say "this model takes no Hermes tools"."""
+    ov = _explicit_model_override(provider, model)
+    if ov is not None and "supports_tools" in ov:
+        return bool(ov["supports_tools"])
+    declared = _provider_model_capabilities(provider, model)
+    return bool(declared["supports_tools"]) if "supports_tools" in declared else None
+
+
 # Catalog miss — a _default override may fill the gap (#84482).
 def _default_override_context(provider: str) -> Optional[int]:
     """Fill-gap context from a ``_default`` override, for catalog misses."""
