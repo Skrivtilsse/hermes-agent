@@ -177,6 +177,33 @@ def test_review_verdict_after_a_child_process_completion_reaches_the_parent_exac
     adapter.handle_message.assert_awaited_once()
 
 
+@pytest.mark.parametrize("marker_target", ["live_other_conversation", "reset_ancestor"])
+def test_a_routed_gateway_row_never_follows_a_polluted_delegate_marker(world, marker_target):
+    """#109073: a main gateway row can carry ``_delegate_from``. The routed row owns its chat, so a
+    completion pinned to it stays there instead of being walked to the marker's target."""
+    import json
+
+    key = world.parent.session_key
+    if marker_target == "live_other_conversation":
+        world.db.create_session("other_conversation", source="telegram")
+    else:
+        world.db.create_session("other_conversation", source="telegram")
+        world.db.end_session("other_conversation", end_reason="session_reset")
+    world.db._conn.execute(
+        "UPDATE sessions SET model_config = ? WHERE id = ?",
+        (json.dumps({"_delegate_from": "other_conversation", "_reset_from": "other_conversation"}),
+         world.parent.session_id),
+    )
+    world.db._conn.commit()
+    entry = world.store.lookup_by_session_key(key)
+
+    resolved = asyncio.run(world.runner._resolve_async_delegation_session(entry, world.parent.session_id))
+
+    assert resolved is not None and resolved.session_id == world.parent.session_id
+    assert world.store.lookup_by_session_key(key).session_id == world.parent.session_id
+    assert world.db.get_session(world.parent.session_id)["ended_at"] is None
+
+
 @pytest.mark.parametrize("boundary", ["new", "switch_to_other_session"])
 def test_a_real_user_boundary_still_drops_the_verdict(world, monkeypatch, boundary):
     import tools.async_delegation as ad

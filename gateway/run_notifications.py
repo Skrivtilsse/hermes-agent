@@ -307,6 +307,11 @@ class GatewayNotificationsMixin:
                 )
                 return None
             delegate_chain.add(pinned_session_id)
+            if pinned_row.get("session_key"):
+                # A routed gateway row owns its conversation: delegate children are created without a
+                # routing key (``_inherit_parent_session_metadata``), so a ``_delegate_from`` on this
+                # row is a polluted marker (#109073), never provenance to follow.
+                break
             model_config = pinned_row.get("model_config")
             if isinstance(model_config, str):
                 try:
