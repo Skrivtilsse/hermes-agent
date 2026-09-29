@@ -299,6 +299,11 @@ class GatewayNotificationsMixin:
         # guards a corrupt/hand-edited chain: without it a single completion event could fan out
         # into hundreds of sequential get_session() reads before terminating.
         delegate_chain: set[str] = set()
+        # Set when provenance was followed from a row that holds a routing key: either a delegate child
+        # an older re-point left routed (switch_session records the peer on its target) or a gateway
+        # row with a polluted marker (#109073). Such a completion may reach the CURRENT route through
+        # its provenance, but never re-points the route.
+        followed_routed_marker = False
         for _ in range(_MAX_DELEGATE_PROVENANCE_HOPS + 1):
             if pinned_session_id in delegate_chain:
                 logger.warning(
@@ -307,10 +312,8 @@ class GatewayNotificationsMixin:
                 )
                 return None
             delegate_chain.add(pinned_session_id)
-            if pinned_row.get("session_key"):
-                # A routed gateway row owns its conversation: delegate children are created without a
-                # routing key (``_inherit_parent_session_metadata``), so a ``_delegate_from`` on this
-                # row is a polluted marker (#109073), never provenance to follow.
+            if pinned_row.get("session_key") and pinned_session_id == session_entry.session_id:
+                # The row that owns the current route keeps it; a marker on it is never followed (#109073).
                 break
             model_config = pinned_row.get("model_config")
             if isinstance(model_config, str):
@@ -333,6 +336,8 @@ class GatewayNotificationsMixin:
             delegate_parent_id = str(model_config.get("_delegate_from") or "").strip()
             if not delegate_parent_id:
                 break
+            if pinned_row.get("session_key"):
+                followed_routed_marker = True
             try:
                 delegate_parent_row = await session_db.get_session(delegate_parent_id)
             except Exception:
@@ -379,6 +384,13 @@ class GatewayNotificationsMixin:
                 return None
         if target_session_id == session_entry.session_id:
             return session_entry
+        if followed_routed_marker:
+            logger.warning(
+                "Async-delegation completion pinned through a routed row with delegate provenance resolves "
+                "to %s, not the current route %s; dropping injection without re-pointing the route (#92611).",
+                target_session_id, session_entry.session_id,
+            )
+            return None
         prior_session_id = session_entry.session_id
         if not self._is_session_run_current(session_entry.session_key, run_generation):
             logger.warning(

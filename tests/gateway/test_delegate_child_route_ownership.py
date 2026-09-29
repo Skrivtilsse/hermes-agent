@@ -204,6 +204,39 @@ def test_a_routed_gateway_row_never_follows_a_polluted_delegate_marker(world, ma
     assert world.db.get_session(world.parent.session_id)["ended_at"] is None
 
 
+@pytest.mark.parametrize("route_now", ["parent", "after_new", "other_live_session"])
+def test_a_previously_routed_delegate_row_never_takes_the_chat_back(world, route_now):
+    """A delegate row an older re-point left holding the routing key (``switch_session`` records the
+    peer on its target) is still a delegate transcript: its completion may reach the current route
+    through its provenance, but it never re-points the route -- to itself or anywhere else."""
+    key = world.parent.session_key
+    world.db._conn.execute(
+        "UPDATE sessions SET session_key = ?, source = 'telegram' WHERE id = ?", (key, world.child_id),
+    )
+    world.db._conn.commit()
+    if route_now == "after_new":
+        world.store.reset_session(key)
+    elif route_now == "other_live_session":
+        world.db.create_session("other_conversation", source="telegram")
+        world.store.switch_session(key, "other_conversation")
+        # The parent is live again (as after an older /resume), but it does not own the route now.
+        world.db._conn.execute(
+            "UPDATE sessions SET ended_at = NULL, end_reason = NULL WHERE id = ?", (world.parent.session_id,),
+        )
+        world.db._conn.commit()
+    before = world.store.lookup_by_session_key(key)
+
+    resolved = _child_process_completion_reaches_turn(world)
+
+    after = world.store.lookup_by_session_key(key)
+    assert after.session_id == before.session_id, f"route moved from {before.session_id} to {after.session_id}"
+    assert world.db.get_session(before.session_id)["ended_at"] is None
+    if route_now == "parent":
+        assert resolved is not None and resolved.session_id == world.parent.session_id
+    else:
+        assert resolved is None
+
+
 @pytest.mark.parametrize("boundary", ["new", "switch_to_other_session"])
 def test_a_real_user_boundary_still_drops_the_verdict(world, monkeypatch, boundary):
     import tools.async_delegation as ad
