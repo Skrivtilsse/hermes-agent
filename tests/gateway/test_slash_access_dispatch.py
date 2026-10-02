@@ -321,6 +321,89 @@ async def test_admin_runs_quick_command_when_gating_enabled():
 
 
 # ---------------------------------------------------------------------------
+# Multiplexed quick commands follow the bot-owning profile, like slash access.
+# ---------------------------------------------------------------------------
+
+
+def _multiplexed_ops_runner():
+    """Launch profile ``primary`` and two secondaries: ``dm-buddy`` (ungated, no quick commands)
+    and ``ops`` (its own non-admin policy and the only ``/ops``)."""
+    runner = _make_runner(multiplex_profiles=True)
+    runner._draining = False
+    runner._profile_configs["dm-buddy"] = GatewayConfig(
+        platforms={Platform.DISCORD: PlatformConfig(enabled=True, extra={})}
+    )
+    runner._profile_configs["ops"] = GatewayConfig(
+        platforms={
+            Platform.DISCORD: PlatformConfig(
+                enabled=True,
+                extra={"allow_admin_from": ["nobody"], "user_allowed_commands": ["ops"]},
+            )
+        },
+        quick_commands={"ops": {"type": "exec", "command": "printf ops-report"}},
+    )
+    return runner
+
+
+def _bot_source(transport: str, *, runtime: str | None = None, user_id: str = "owner"):
+    runtime = runtime or transport
+    source = _make_source(user_id=user_id, profile=None if runtime == "primary" else runtime)
+    source._identity = RoutingIdentity(
+        transport_profile=transport, runtime_profile=runtime,
+        authorization_home=Path(f"/profiles/{transport}"), runtime_home=Path(f"/profiles/{runtime}"),
+    )
+    return source
+
+
+@pytest.mark.asyncio
+async def test_quick_command_exists_only_on_its_own_profile_bot():
+    runner = _multiplexed_ops_runner()
+    ops = _bot_source("ops")
+    handled, result, _ = await runner._hm_dispatch_quick_and_plugin_commands(
+        _make_event("/ops", ops), ops, "ops")
+    assert handled and result == "ops-report"
+
+    for other in (_bot_source("dm-buddy"), _bot_source("primary")):
+        assert runner._hm_quick_commands(other) == {}
+        handled, result, _ = await runner._hm_dispatch_quick_and_plugin_commands(
+            _make_event("/ops", other), other, "ops")
+        assert "ops-report" not in (result or "")
+
+
+def test_quick_command_bot_keeps_its_own_slash_policy():
+    runner = _multiplexed_ops_runner()
+    ops = _bot_source("ops")
+    assert runner._check_slash_access(ops, "ops") is None
+    assert runner._check_slash_access(ops, "model") is not None
+    # dm-buddy keeps its own (ungated) policy for the same user.
+    assert runner._check_slash_access(_bot_source("dm-buddy"), "model") is None
+
+
+def test_quick_commands_follow_the_transport_profile_of_a_routed_turn():
+    """A turn routed to ``ops`` through the launch bot gets the launch bot's quick commands,
+    matching the slash-access owner; the routed profile's ``/ops`` is not exposed on that bot."""
+    runner = _multiplexed_ops_runner()
+    runner.config.quick_commands = {"launch-only": {"type": "exec", "command": "printf x"}}
+    routed = _bot_source("primary", runtime="ops")
+    assert set(runner._hm_quick_commands(routed)) == {"launch-only"}
+
+
+@pytest.mark.asyncio
+async def test_missing_secondary_config_gets_no_quick_commands():
+    """A served profile whose config is not cached inherits neither the launch profile's quick
+    commands nor its open slash policy."""
+    runner = _multiplexed_ops_runner()
+    runner.config.quick_commands = {"ops": {"type": "exec", "command": "printf launch-ops"}}
+    del runner._profile_configs["ops"]
+    ops = _bot_source("ops")
+    assert runner._hm_quick_commands(ops) == {}
+    handled, result, _ = await runner._hm_dispatch_quick_and_plugin_commands(
+        _make_event("/ops", ops), ops, "ops")
+    assert "launch-ops" not in (result or "")
+    assert runner._check_slash_access(ops, "model") is not None
+
+
+# ---------------------------------------------------------------------------
 # Running-agent fast-path gating — admin/user split must hold even when an
 # agent is already running. The fast-path block in _handle_message dispatches
 # /stop, /restart, /new, /steer, /model, /approve, /deny, /agents,

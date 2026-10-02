@@ -726,9 +726,20 @@ class GatewayInboundMixin:
         self._queue_or_replace_pending_event(_quick_key, event)
         return None
 
-    def _hm_quick_commands(self) -> dict:
-        """User-defined ``quick_commands`` mapping from config (empty dict when unset/malformed)."""
+    def _hm_quick_commands(self, source: Optional[SessionSource]) -> dict:
+        """User-defined ``quick_commands`` of the profile whose bot received ``source`` (empty dict
+        when unset/malformed). Under multiplexing ``self.config`` is the launch profile's alone, so
+        the owner is resolved as ``policy_for_runner_source`` resolves slash access; a served profile
+        whose config is not cached gets none rather than the launch profile's."""
         cfg = self.config
+        if getattr(cfg, "multiplex_profiles", False) and source is not None:
+            from gateway.session_identity import identity_of
+            identity = identity_of(source)
+            owner = identity.transport_profile if identity is not None else getattr(source, "profile", None)
+            if owner and owner != (getattr(self, "_primary_profile_name", None) or "default"):
+                cfg = (getattr(self, "_profile_configs", None) or {}).get(owner)
+                if cfg is None:
+                    return {}
         qc = (cfg.get("quick_commands") if isinstance(cfg, dict) else getattr(cfg, "quick_commands", None)) or {}
         return qc if isinstance(qc, dict) else {}
 
@@ -809,7 +820,7 @@ class GatewayInboundMixin:
         # --provider openrouter reach the /model handler. Built-ins keep precedence: aliases only
         # need early handling when the typed command is not already known.
         if command and _cmd_def is None:
-            qcmd = self._hm_quick_commands().get(command)
+            qcmd = self._hm_quick_commands(source).get(command)
             if qcmd is not None and qcmd.get("type") == "alias":
                 new_command = self._hm_expand_alias_quick_command(event, qcmd)
                 if new_command is not None:
@@ -1030,7 +1041,7 @@ class GatewayInboundMixin:
             return True, f"⏳ Gateway is {self._status_action_gerund()} and is not accepting new work right now.", command
 
         # User-defined quick commands (bypass agent loop, no LLM call)
-        qcmd = self._hm_quick_commands().get(command) if command else None
+        qcmd = self._hm_quick_commands(source).get(command) if command else None
         if qcmd is not None:
             # Quick commands are slash capabilities too — and type:exec ones run a shell command in
             # the gateway process. They are never in the registry, so the early gate never fires for
