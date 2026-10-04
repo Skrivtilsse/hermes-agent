@@ -82,24 +82,64 @@ def test_another_session_is_not_contaminated(_isolate, tmp_path):
     assert _norm(_run("pwd", "session-b")["output"]) == _norm(_isolate)
 
 
-def test_overlapping_cd_from_another_command_is_not_overwritten(_isolate, tmp_path):
-    """A workdir command must not write a stale cwd back over a newer one: while it runs, a regular
-    command on the same shared environment moves into another directory and finishes first."""
+def test_overlapping_cd_from_another_session_is_not_overwritten(_isolate, tmp_path):
+    """A workdir command must never write a stale cwd over a newer one: while it runs, a regular command
+    from ANOTHER session on the same shared environment moves into another directory and finishes first."""
     import threading
+    import time
 
     work = tmp_path / "work"
     moved = tmp_path / "moved"
     work.mkdir()
     moved.mkdir()
     done = {}
-    slow = threading.Thread(target=lambda: done.setdefault("a", _run("sleep 3; pwd", "shared", workdir=str(work))))
+    slow = threading.Thread(target=lambda: done.setdefault("a", _run("sleep 3; pwd", "session-a", workdir=str(work))))
     slow.start()
-    import time
     time.sleep(1)
-    _run(f"cd '{moved.as_posix()}'", "shared")
+    _run(f"cd '{moved.as_posix()}'", "session-b")
     slow.join(30)
     assert _norm(done["a"]["output"]) == _norm(work)
+    assert _norm(tt.get_session_cwd("session-b")) == _norm(moved)
+    assert tt.get_session_cwd("session-a") is None
     assert _shared_env_cwds() == {_norm(moved)}
+
+
+def test_a_timed_out_workdir_command_moves_nothing_and_later_cds_still_count(_isolate, tmp_path):
+    work = tmp_path / "work"
+    later = tmp_path / "later"
+    work.mkdir()
+    later.mkdir()
+    timed_out = json.loads(tt.terminal_tool(command="sleep 5", task_id="t7", workdir=str(work), timeout=1))
+    assert timed_out["exit_code"] == 124, timed_out
+    assert _shared_env_cwds() == {_norm(_isolate)}
+    _run(f"cd '{later.as_posix()}'", "t7")
+    assert _shared_env_cwds() == {_norm(later)}
+
+
+def test_a_failing_workdir_execution_leaves_cwd_tracking_intact(_isolate, tmp_path, monkeypatch):
+    """Retries exhausted on an execution error: the shared cwd is untouched, and the next ordinary command's
+    cd is adopted again (the per-call opt-out does not leak past the failed call)."""
+    from tools.environments.local import LocalEnvironment
+
+    work = tmp_path / "work"
+    later = tmp_path / "later"
+    work.mkdir()
+    later.mkdir()
+    real_execute = LocalEnvironment.execute
+
+    def flaky_execute(self, command, *args, **kwargs):
+        if command == "boom-cmd":
+            raise RuntimeError("simulated execution failure")
+        return real_execute(self, command, *args, **kwargs)
+
+    monkeypatch.setattr(LocalEnvironment, "execute", flaky_execute)
+    monkeypatch.setattr(tt.time, "sleep", lambda *_a, **_k: None)
+    _run("pwd", "t8")  # create the environment before the failing call
+    failed = json.loads(tt.terminal_tool(command="boom-cmd", task_id="t8", workdir=str(work)))
+    assert "simulated execution failure" in (failed.get("error") or ""), failed
+    assert _shared_env_cwds() == {_norm(_isolate)}
+    _run(f"cd '{later.as_posix()}'", "t8")
+    assert _shared_env_cwds() == {_norm(later)}
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
