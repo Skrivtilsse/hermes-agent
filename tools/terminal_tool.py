@@ -1144,33 +1144,42 @@ def _run_foreground(
         from tools.interrupt import clear_current_thread_interrupt
         clear_current_thread_interrupt()
 
-    for retry_count in range(max_retries + 1):
-        try:
-            command_cwd = _resolve_command_cwd(
-                workdir=workdir, default_cwd=plan.cwd, session_key=session_key, env_type=env_type,
-            )
-            # bounded_capture: model-facing output keeps a head/tail window
-            # while streaming so a verbose command can't OOM the gateway;
-            # internal env.execute() consumers stay unbounded.
-            result = env.execute(
-                command, timeout=effective_timeout, cwd=command_cwd, bounded_capture=True,
-                **_yield_kwargs(command, env_type=env_type, cwd=command_cwd, effective_task_id=eff,
-                                task_id=task_id, session_key=session_key),
-            )
-            break
-        except Exception as e:
-            if "timeout" in str(e).lower():
-                return _error_json(f"Command timed out after {effective_timeout} seconds", exit_code=124)
-            # Retry on transient errors
-            if retry_count < max_retries:
-                wait_time = 2 ** (retry_count + 1)
-                logger.warning("Execution error, retrying in %ds (attempt %d/%d) - Command: %s - Error: %s: %s - Task: %s, Backend: %s",
-                               wait_time, retry_count + 1, max_retries, _safe_command_preview(command), type(e).__name__, e, eff, env_type)
-                time.sleep(wait_time)
-                continue
-            logger.error("Execution failed after %d retries - Command: %s - Error: %s: %s - Task: %s, Backend: %s",
-                         max_retries, _safe_command_preview(command), type(e).__name__, e, eff, env_type)
-            return _error_json(_redact_terminal_error_text(f"Command execution failed: {type(e).__name__}: {e}"))
+    # A per-command ``workdir`` is per-command: the environment adopts every command's final directory
+    # (and spawns the next shell there), so restore its cwd afterwards however the loop exits. The durable
+    # session record already skips ``workdir`` in finalize_foreground_result (#73683, upstream #73717).
+    restore_env_cwd = bool(workdir) and hasattr(env, "cwd")
+    pre_command_env_cwd = getattr(env, "cwd", None) if restore_env_cwd else None
+    try:
+        for retry_count in range(max_retries + 1):
+            try:
+                command_cwd = _resolve_command_cwd(
+                    workdir=workdir, default_cwd=plan.cwd, session_key=session_key, env_type=env_type,
+                )
+                # bounded_capture: model-facing output keeps a head/tail window
+                # while streaming so a verbose command can't OOM the gateway;
+                # internal env.execute() consumers stay unbounded.
+                result = env.execute(
+                    command, timeout=effective_timeout, cwd=command_cwd, bounded_capture=True,
+                    **_yield_kwargs(command, env_type=env_type, cwd=command_cwd, effective_task_id=eff,
+                                    task_id=task_id, session_key=session_key),
+                )
+                break
+            except Exception as e:
+                if "timeout" in str(e).lower():
+                    return _error_json(f"Command timed out after {effective_timeout} seconds", exit_code=124)
+                # Retry on transient errors
+                if retry_count < max_retries:
+                    wait_time = 2 ** (retry_count + 1)
+                    logger.warning("Execution error, retrying in %ds (attempt %d/%d) - Command: %s - Error: %s: %s - Task: %s, Backend: %s",
+                                   wait_time, retry_count + 1, max_retries, _safe_command_preview(command), type(e).__name__, e, eff, env_type)
+                    time.sleep(wait_time)
+                    continue
+                logger.error("Execution failed after %d retries - Command: %s - Error: %s: %s - Task: %s, Backend: %s",
+                             max_retries, _safe_command_preview(command), type(e).__name__, e, eff, env_type)
+                return _error_json(_redact_terminal_error_text(f"Command execution failed: {type(e).__name__}: {e}"))
+    finally:
+        if restore_env_cwd:
+            env.cwd = pre_command_env_cwd
 
     if result.get("yielded_session_id"):
         return json.dumps({
