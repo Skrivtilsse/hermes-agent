@@ -82,6 +82,26 @@ def test_another_session_is_not_contaminated(_isolate, tmp_path):
     assert _norm(_run("pwd", "session-b")["output"]) == _norm(_isolate)
 
 
+def test_overlapping_cd_from_another_command_is_not_overwritten(_isolate, tmp_path):
+    """A workdir command must not write a stale cwd back over a newer one: while it runs, a regular
+    command on the same shared environment moves into another directory and finishes first."""
+    import threading
+
+    work = tmp_path / "work"
+    moved = tmp_path / "moved"
+    work.mkdir()
+    moved.mkdir()
+    done = {}
+    slow = threading.Thread(target=lambda: done.setdefault("a", _run("sleep 3; pwd", "shared", workdir=str(work))))
+    slow.start()
+    import time
+    time.sleep(1)
+    _run(f"cd '{moved.as_posix()}'", "shared")
+    slow.join(30)
+    assert _norm(done["a"]["output"]) == _norm(work)
+    assert _shared_env_cwds() == {_norm(moved)}
+
+
 @pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
 def test_worktree_removal_after_workdir_commands_completes(_isolate, tmp_path):
     repo = tmp_path / "repo"

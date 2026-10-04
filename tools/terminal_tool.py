@@ -18,6 +18,7 @@ import/patch target): ``terminal_tool_config`` (TERMINAL_* reads, ``_quiet``),
 ``terminal_tool_result`` (foreground result post-processing).
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -1144,12 +1145,11 @@ def _run_foreground(
         from tools.interrupt import clear_current_thread_interrupt
         clear_current_thread_interrupt()
 
-    # A per-command ``workdir`` is per-command: the environment adopts every command's final directory
-    # (and spawns the next shell there), so restore its cwd afterwards however the loop exits. The durable
-    # session record already skips ``workdir`` in finalize_foreground_result (#73683, upstream #73717).
-    restore_env_cwd = bool(workdir) and hasattr(env, "cwd")
-    pre_command_env_cwd = getattr(env, "cwd", None) if restore_env_cwd else None
-    try:
+    # A per-command ``workdir`` is per-command: its final directory is reported but never adopted into the
+    # shared environment cwd, so no later shell is spawned there and no other caller's cwd is overwritten.
+    # The durable session record already skips ``workdir`` in finalize_foreground_result (#73683, #73717).
+    from tools.environments.base import keep_environment_cwd
+    with (keep_environment_cwd() if workdir else contextlib.nullcontext()):
         for retry_count in range(max_retries + 1):
             try:
                 command_cwd = _resolve_command_cwd(
@@ -1177,9 +1177,6 @@ def _run_foreground(
                 logger.error("Execution failed after %d retries - Command: %s - Error: %s: %s - Task: %s, Backend: %s",
                              max_retries, _safe_command_preview(command), type(e).__name__, e, eff, env_type)
                 return _error_json(_redact_terminal_error_text(f"Command execution failed: {type(e).__name__}: {e}"))
-    finally:
-        if restore_env_cwd:
-            env.cwd = pre_command_env_cwd
 
     if result.get("yielded_session_id"):
         return json.dumps({

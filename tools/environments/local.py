@@ -981,11 +981,14 @@ class LocalEnvironment(BaseEnvironment):
         command did not observe, so ``cwd_observed`` is dropped."""
         prev_cwd = self.cwd
         super()._extract_cwd_from_output(result)
-        if self.cwd != prev_cwd:
-            normalized = _msys_to_windows_path(self.cwd)
+        observed = result.get("cwd") if result.get("cwd_observed") else None
+        if observed and observed != prev_cwd:
+            # Normalize the REPORTED cwd even when the base did not adopt it (keep_environment_cwd).
+            normalized = _msys_to_windows_path(observed)
             if normalized and os.path.isdir(normalized):
-                self.cwd = normalized
                 result["cwd"] = normalized
+                if self.cwd != prev_cwd:
+                    self.cwd = normalized
             else:
                 self.cwd = prev_cwd
                 result.pop("cwd_observed", None)

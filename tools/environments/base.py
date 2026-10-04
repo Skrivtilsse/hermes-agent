@@ -7,6 +7,8 @@ or a temp file (local). Cohesive pieces live in sibling modules (``base_output``
 ``base_session_env``, ``base_wait``, ``path_utils``).
 """
 
+import contextlib
+import contextvars
 import json
 import logging
 import os
@@ -32,6 +34,20 @@ from tools.environments.base_wait import _WaitTrace
 from utils import env_var_enabled
 
 logger = logging.getLogger(__name__)
+
+# Whether a finished command's cwd marker moves the environment's shared cwd. Per call (a contextvar), so
+# a per-command override never touches another caller's view and no stale value is ever written back.
+_ADOPT_COMMAND_CWD: contextvars.ContextVar[bool] = contextvars.ContextVar("adopt_command_cwd", default=True)
+
+
+@contextlib.contextmanager
+def keep_environment_cwd():
+    """Run commands whose final cwd is reported but not adopted into the environment's cwd (#73683)."""
+    token = _ADOPT_COMMAND_CWD.set(False)
+    try:
+        yield
+    finally:
+        _ADOPT_COMMAND_CWD.reset(token)
 
 # Opt-in debug tracing for the interrupt/activity/poll machinery
 # (HERMES_DEBUG_INTERRUPT=1). Off by default to avoid flooding gateway logs.
@@ -531,6 +547,9 @@ class BaseEnvironment(ABC):
         self._kill_process(proc)
 
     # --- CWD extraction ---
+    # Read by _extract_cwd_from_output. A caller running a per-command cwd override wraps the call in
+    # ``keep_environment_cwd()``: the command's final cwd is still reported in ``result["cwd"]``, but the
+    # shared ``self.cwd`` is not moved, so no later shell is spawned there (#73683).
     def _update_cwd(self, result: dict):
         """Extract CWD from command output. Override for local file-based read."""
         self._extract_cwd_from_output(result)
@@ -546,7 +565,8 @@ class BaseEnvironment(ABC):
             return
         cwd_path, cleaned = split
         if cwd_path:
-            self.cwd = cwd_path
+            if _ADOPT_COMMAND_CWD.get():
+                self.cwd = cwd_path
             result["cwd_observed"] = True
             result["cwd"] = cwd_path
         result["output"] = cleaned
