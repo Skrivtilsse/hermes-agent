@@ -2003,23 +2003,11 @@ class GatewayTurnMixin:
         except Exception:
             logger.debug("Failed to persist inbound user message after agent exception", exc_info=True)
         # Never expose raw exception types/messages to end users (info-leakage risk).
-        from agent.reinvocation_guard import invocation_started_this_run
-
-        _turn_agent = getattr(self._session_state(session_key).turn, "agent", None)
-        if invocation_started_this_run(_turn_agent):
-            # A stateful provider that does not support automatic reinvocation was already started for
-            # this request: it may have acted, so no /retry (or "try again") advice, only verification.
-            from agent.turn_failure_copy import NONREPLAYABLE_NEXT_STEP
-
-            return self._hmwa_add_failed_turn_notice(
-                f"⚠️ Something went wrong and I couldn't finish this reply. {NONREPLAYABLE_NEXT_STEP} "
-                "Technical details are in the gateway log (`hermes logs`).",
-                PARTIAL_FAILED_TURN_NOTICE,
-            )
         status_hint = self._STATUS_HINTS.get(status_code, "")
         if status_code == 401:
             from agent.turn_failure_copy import relogin_command_hint
 
+            _turn_agent = getattr(self._session_state(session_key).turn, "agent", None)
             status_hint = status_hint.format(relogin=relogin_command_hint(getattr(_turn_agent, "provider", None)))
         elif status_code == 429:
             # Plan usage limit (resets on a schedule) vs a transient rate limit
