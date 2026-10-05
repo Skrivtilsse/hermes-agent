@@ -93,14 +93,58 @@ def test_overlapping_cd_from_another_session_is_not_overwritten(_isolate, tmp_pa
     work.mkdir()
     moved.mkdir()
     done = {}
-    slow = threading.Thread(target=lambda: done.setdefault("a", _run("sleep 3; pwd", "session-a", workdir=str(work))))
+    # The workdir command signals once it is running, then holds until session-b's cd has finished.
+    held = "touch started; while [ ! -f go ]; do sleep 0.05; done; pwd"
+    slow = threading.Thread(target=lambda: done.setdefault("a", _run(held, "session-a", workdir=str(work))))
     slow.start()
-    time.sleep(1)
+    deadline = time.monotonic() + 20
+    while not (work / "started").exists():
+        assert time.monotonic() < deadline, "the workdir command never started"
+        time.sleep(0.05)
     _run(f"cd '{moved.as_posix()}'", "session-b")
+    (work / "go").touch()
     slow.join(30)
     assert _norm(done["a"]["output"]) == _norm(work)
     assert _norm(tt.get_session_cwd("session-b")) == _norm(moved)
     assert tt.get_session_cwd("session-a") is None
+    assert _shared_env_cwds() == {_norm(moved)}
+
+
+@pytest.mark.parametrize("reported", ["usable", "stale"])
+def test_a_cwd_change_landing_during_local_normalization_survives(_isolate, tmp_path, monkeypatch, reported):
+    """Another session's cwd change lands while LocalEnvironment normalizes a workdir command's reported cwd
+    (usable, or stale and dropped): the workdir command must not write either its own cwd or its pre-command
+    snapshot over that newer value."""
+    import tools.environments.local as local_env
+
+    work = tmp_path / "work"
+    moved = tmp_path / "moved"
+    work.mkdir()
+    moved.mkdir()
+    _run("pwd", "t9")  # create the shared environment
+    real_to_windows = local_env._msys_to_windows_path
+    real_extract = local_env.LocalEnvironment._extract_cwd_from_output
+    extracting = []
+
+    def extract(self, result):
+        extracting.append(True)
+        try:
+            return real_extract(self, result)
+        finally:
+            extracting.pop()
+
+    def to_windows_while_another_session_moves(path):
+        converted = real_to_windows(path)
+        if extracting and converted and _norm(converted) == _norm(work):
+            for env in tt._active_environments.values():
+                env.cwd = str(moved)  # what another session's adopted cd does to the shared cwd
+            if reported == "stale":
+                return str(tmp_path / "gone")
+        return converted
+
+    monkeypatch.setattr(local_env.LocalEnvironment, "_extract_cwd_from_output", extract)
+    monkeypatch.setattr(local_env, "_msys_to_windows_path", to_windows_while_another_session_moves)
+    _run("pwd", "t9", workdir=str(work))
     assert _shared_env_cwds() == {_norm(moved)}
 
 
