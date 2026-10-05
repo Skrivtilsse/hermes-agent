@@ -280,15 +280,10 @@ def _run_quiet_single_query(cli, effective_query, emitter=None):
         except Exception as _goal_exc:
             logger.debug("kanban goal loop failed: %s", _goal_exc)
 
-    _exit_code = _single_query_exit_code(result)
     if emitter is None:
-        from agent.turn_failure_copy import result_may_have_effects
-        if _exit_code != 0 and result_may_have_effects(result):
-            # A spawner's automatic re-run of this turn would replay a stateful provider's work.
-            from tools.bot_failure_reasons import NONREPLAYABLE_TURN_MARKER
-            print(NONREPLAYABLE_TURN_MARKER, file=sys.stderr)
         print(f"\nsession_id: {cli.session_id}", file=sys.stderr)
 
+    _exit_code = _single_query_exit_code(result)
     if emitter is not None:
         _exit_code = emitter.emit_result(result, session_id=cli.session_id or "", exit_code=_exit_code)
     exit_single_query(_exit_code)

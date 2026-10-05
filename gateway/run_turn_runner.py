@@ -62,23 +62,6 @@ def _renders_exec_approval_buttons(adapter_cls: type) -> bool:
 _CLARIFY_EXPIRED_NOTICE = "⏳ This prompt expired — please send a new request."
 
 
-def _carried_result_fields(result: dict) -> dict:
-    """The agent-result fields a gateway turn result carries unchanged. The non-replayable flag rides
-    along so the failed-turn copy knows a stateful provider may already have acted."""
-    from agent.reinvocation_guard import NONREPLAYABLE_INVOCATION_STARTED
-
-    return {
-        "messages": result.get("messages", []), "api_calls": result.get("api_calls", 0),
-        "failed": result.get("failed", False), "failure_reason": result.get("failure_reason"),
-        "partial": result.get("partial", False), "completed": result.get("completed"),
-        "interrupted": result.get("interrupted", False), "interrupt_message": result.get("interrupt_message"),
-        "error": result.get("error"),
-        "compression_exhausted": result.get("compression_exhausted", False),
-        "compression_deferred": result.get("compression_deferred", False),
-        NONREPLAYABLE_INVOCATION_STARTED: bool(result.get(NONREPLAYABLE_INVOCATION_STARTED)),
-    }
-
-
 class _ExecApprovalDeclined(RuntimeError):
     """The connector refused the approval card's destination.
 
@@ -1991,7 +1974,13 @@ class TurnRunner:
         # compression_exhausted so the gateway never auto-resets a session a concurrent compressor is
         # about to shrink.
         common = {
-            **_carried_result_fields(result),
+            "messages": result.get("messages", []), "api_calls": result.get("api_calls", 0),
+            "failed": result.get("failed", False), "failure_reason": result.get("failure_reason"),
+            "partial": result.get("partial", False), "completed": result.get("completed"),
+            "interrupted": result.get("interrupted", False), "interrupt_message": result.get("interrupt_message"),
+            "error": result.get("error"),
+            "compression_exhausted": result.get("compression_exhausted", False),
+            "compression_deferred": result.get("compression_deferred", False),
             "tools": ctx.tools_holder[0] or [],
             "history_offset": history_offset, "compacted_in_place": compacted_in_place, "session_id": effective_session_id,
             **usage,

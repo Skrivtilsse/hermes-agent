@@ -920,16 +920,13 @@ def _fork_init_kwargs(agent: Any, rt: Dict[str, Any], routed: bool, max_iteratio
     namespace; built-in MEMORY.md/USER.md state is re-bound by the caller. Toolsets match the
     parent so ``tools[]`` is byte-identical (Anthropic's cache key includes it); the runtime
     whitelist restricts dispatch."""
-    from agent.agent_init import requested_enabled_toolsets
     kwargs: Dict[str, Any] = {
         "model": rt.get("model") or agent.model, "max_iterations": max_iterations, "quiet_mode": True,
         "platform": agent.platform, "provider": rt.get("provider") or agent.provider,
         "api_mode": rt.get("api_mode"), "base_url": rt.get("base_url") or None,
         "api_key": rt.get("api_key") or None, "credential_pool": rt.get("credential_pool"),
         "request_overrides": rt.get("request_overrides") or {}, "parent_session_id": agent.session_id,
-        # The parent's requested scope (not narrowed by its own model); the fork applies its own model's
-        # declaration when built, and equals the parent's selection for an ordinary parent.
-        "enabled_toolsets": requested_enabled_toolsets(agent),
+        "enabled_toolsets": getattr(agent, "enabled_toolsets", None),
         "disabled_toolsets": getattr(agent, "disabled_toolsets", None), "skip_memory": True,
     }
     if isinstance(rt.get("max_tokens"), int):

@@ -199,8 +199,9 @@ def _(rid, params: dict, _root=_relay_root, _run=_run_delivery,
                     # too — the retried turn's pre-API compaction pass compacts the over-threshold
                     # transcript first (no fresh session is minted). Auth/quota/config never retry.
                     # See #93091.
-                    from tools.bot_failure_reasons import RETRY_NONE, failure_text_retry_action
-                    if failure_text_retry_action(_detail(proc)) != RETRY_NONE:
+                    from tools.bot_failure_reasons import (
+                        RETRY_NONE, classify_agent_error, retry_action)
+                    if retry_action(classify_agent_error(_detail(proc))) != RETRY_NONE:
                         # The failed attempt already persisted the DM; the re-run resumes that row.
                         from tools.bot_relay import retry_turn_env
                         proc = _run(resolved, tmp, retry_turn_env(turn_env))

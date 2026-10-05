@@ -2308,11 +2308,7 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
 
         # One retry on an empty summary; a summary empty once its <think> block is stripped is NOT retried.
         final_response = _EMPTY_SUMMARY_RESPONSE
-        from agent.reinvocation_guard import claim_main_invocation
         for retry_count in (0, 1):
-            # The summary's own physical boundary: refused (-> no-summary copy below) once this user
-            # action has invoked a provider that does not support automatic reinvocation.
-            claim_main_invocation(agent)
             text = attempt(retry_count)
             if not text:
                 continue

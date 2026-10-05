@@ -1057,34 +1057,7 @@ def _init_fallback_chain(agent, fallback_model):
             print(f"🔄 Fallback chain ({len(chain)} providers): " + " → ".join(labels))
 
 
-def effective_enabled_toolsets(agent, enabled_toolsets):
-    """``enabled_toolsets`` narrowed by the main model's own declaration: ``[]`` (no toolset) when the
-    provider's ``model_capabilities`` or the user's ``model_overrides`` declares ``supports_tools: false``
-    for this model, so no Hermes tool is offered to a model that takes none; unchanged otherwise."""
-    from agent.models_dev import declared_tool_support
-    provider, model = (str(getattr(agent, name, "") or "") for name in ("provider", "model"))
-    if declared_tool_support(provider, model) is False:
-        return []
-    return enabled_toolsets
-
-
-def requested_enabled_toolsets(agent):
-    """The toolset selection the agent was ASKED for, before its own model's declaration narrowed it
-    (``_load_tools`` records it). This, not the capability-narrowed ``enabled_toolsets``, is the permission
-    scope agents built from this one inherit: a child on another model applies its own declaration when
-    it is built. Agents not built through ``_load_tools`` fall back to their current selection."""
-    recorded = getattr(agent, "__dict__", {})
-    if "_requested_enabled_toolsets" in recorded:
-        return recorded["_requested_enabled_toolsets"]
-    return getattr(agent, "enabled_toolsets", None)
-
-
 def _load_tools(agent, enabled_toolsets, disabled_toolsets):
-    # The empty selection of a model that declares no tools also gates the memory-provider and
-    # context-engine appenders that run later, through their existing enabled_toolsets checks. The
-    # requested selection is kept so a later model switch can narrow it again for the new model.
-    agent._requested_enabled_toolsets = enabled_toolsets
-    enabled_toolsets = agent.enabled_toolsets = effective_enabled_toolsets(agent, enabled_toolsets)
     # A multiplexed gateway may have switched HERMES_HOME since model_tools was imported;
     # make sure this profile's plugins are discovered before the tool snapshot.
     try:

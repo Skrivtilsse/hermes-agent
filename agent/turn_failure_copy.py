@@ -9,7 +9,6 @@ trailing "Provider said:" / "Details:" line.
 
 from __future__ import annotations
 
-import re
 import time
 from typing import Any, Dict, NamedTuple, Optional, Tuple
 
@@ -59,19 +58,8 @@ def untyped_failed_turn_display_kind(role: Any, content: Any) -> Optional[str]:
     return None
 
 
-def result_may_have_effects(result: Any) -> bool:
-    """True when the turn started a non-replayable (stateful) main-provider invocation: that provider
-    may have acted before it failed, whatever Hermes' own transcript shows."""
-    from agent.reinvocation_guard import NONREPLAYABLE_INVOCATION_STARTED
-
-    return isinstance(result, dict) and bool(result.get(NONREPLAYABLE_INVOCATION_STARTED))
-
-
-def failed_turn_notice(turn_messages: Any, *, effects_possible: bool = False) -> str:
-    """Boundary copy for a failed turn: never claim "not processed" when a tool may have run, or when
-    a stateful provider that may have acted was invoked (``effects_possible``)."""
-    if effects_possible:
-        return PARTIAL_FAILED_TURN_NOTICE
+def failed_turn_notice(turn_messages: Any) -> str:
+    """Boundary copy for a failed turn: never claim "not processed" when a tool may have run."""
     for row in turn_messages or ():
         if isinstance(row, dict) and (
             row.get("role") == "tool" or (row.get("role") == "assistant" and row.get("tool_calls"))
@@ -433,36 +421,6 @@ def nonretryable_copy(
     body = template.format(label=label, model=model, home=display_hermes_home(), prefix_hint=prefix_hint,
                            relogin=oauth_relogin_command(provider))
     return f"{body}\n\nProvider said: {summary}"
-
-
-# Next step once a stateful (non-reinvocable) provider may already have acted: no blind resend, no
-# /retry, no switch-provider advice. Shared by every surface that reports such a failure.
-NONREPLAYABLE_NEXT_STEP = (
-    "Hermes did not retry it automatically, because it may already have made changes. "
-    "Check what it changed before sending the request again."
-)
-
-
-# A provider's own diagnostic can carry recovery advice ("This is usually transient; retry in a
-# minute"). After a stateful provider started, that advice invites a blind replay: the sentences that
-# carry it are dropped, the diagnostic ones kept (the full text stays in the log).
-_REPLAY_ADVICE_RE = re.compile(
-    r"\b(?:re-?try|try (?:it |this |the request )?again|re-?run|re-?send|send (?:it|this|the request) again"
-    r"|fall ?back|backup provider|switch (?:models?|providers?))\b|/retry",
-    re.IGNORECASE,
-)
-
-
-def strip_replay_advice(text: str) -> str:
-    """``text`` without the sentences that recommend retrying, resending or falling back."""
-    sentences = re.split(r"(?<=[.!?])\s+", str(text or "").strip())
-    kept = [s for s in sentences if s and not _REPLAY_ADVICE_RE.search(s)]
-    return " ".join(kept) if kept else "(the provider's retry advice was withheld)"
-
-
-def nonreplayable_failure_copy(*, label: str, summary: str) -> str:
-    """Chat copy for a failure after a stateful (non-reinvocable) provider started the request."""
-    return f"⚠️ {label} did not finish this request. {NONREPLAYABLE_NEXT_STEP}\n\nProvider said: {summary}"
 
 
 def content_policy_copy(*, label: str, summary: str) -> str:

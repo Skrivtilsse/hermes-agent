@@ -33,17 +33,11 @@ def _resolve_refresh_toolsets(agent, enabled_override, disabled_override):
     """Explicit reloads pass freshly-resolved toolsets (so a server just ENABLED in config is
     picked up) and the agent's selection is updated to match; automatic paths pass nothing
     and reuse the build-time selection."""
-    from agent.agent_init import effective_enabled_toolsets, requested_enabled_toolsets
-    requested = requested_enabled_toolsets(agent)
+    enabled = getattr(agent, "enabled_toolsets", None)
     disabled = getattr(agent, "disabled_toolsets", None)
     if enabled_override is not None or disabled_override is not None:
-        requested = enabled_override if enabled_override is not None else requested
+        enabled = enabled_override if enabled_override is not None else enabled
         disabled = disabled_override if disabled_override is not None else disabled
-        agent._requested_enabled_toolsets = requested
-    # Narrowed for the agent's CURRENT provider/model: a reload never re-offers tools to a model that
-    # declares it takes none, and a switch back to a tools-capable model gets its tools again.
-    enabled = effective_enabled_toolsets(agent, requested)
-    if enabled_override is not None or disabled_override is not None or enabled != getattr(agent, "enabled_toolsets", None):
         agent.enabled_toolsets, agent.disabled_toolsets = enabled, disabled
     return enabled, disabled
 

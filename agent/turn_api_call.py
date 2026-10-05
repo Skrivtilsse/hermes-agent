@@ -87,17 +87,6 @@ def perform_api_call(
     _use_streaming = _should_stream(agent)
 
     def _perform_api_call(next_api_kwargs):
-        # The physical boundary: an opted-out provider is invoked once per user action (see
-        # agent/reinvocation_guard.py). Refused before any provider call starts.
-        from agent.reinvocation_guard import claim_main_invocation, record_invocation_failure
-        claim = claim_main_invocation(agent)
-        try:
-            return _dispatch_physical_call(next_api_kwargs)
-        except BaseException as exc:
-            record_invocation_failure(claim, exc)
-            raise
-
-    def _dispatch_physical_call(next_api_kwargs):
         if agent.api_mode == "codex_responses":
             next_api_kwargs = agent._get_transport().preflight_kwargs(
                 next_api_kwargs, allow_stream=False, is_github_responses=agent._is_copilot_url(),
