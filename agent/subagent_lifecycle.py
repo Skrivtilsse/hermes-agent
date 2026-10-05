@@ -411,8 +411,6 @@ class SubagentLifecycleService:
         unknown = set(request.allowed_toolsets) - set(TOOLSETS)
         if unknown:
             raise SubagentLifecycleError(f"Unknown toolsets: {', '.join(sorted(unknown))}.")
-        # The parent's requested scope bounds a child, not its own capability-narrowed selection.
-        from agent.agent_init import requested_enabled_toolsets
-        enabled = requested_enabled_toolsets(parent)
+        enabled = getattr(parent, "enabled_toolsets", None)
         if enabled is not None and not set(request.allowed_toolsets).issubset(set(enabled)):
             raise SubagentLifecycleError("Requested toolsets would broaden parent permissions.")

@@ -1068,17 +1068,6 @@ def effective_enabled_toolsets(agent, enabled_toolsets):
     return enabled_toolsets
 
 
-def requested_enabled_toolsets(agent):
-    """The toolset selection the agent was ASKED for, before its own model's declaration narrowed it
-    (``_load_tools`` records it). This, not the capability-narrowed ``enabled_toolsets``, is the permission
-    scope agents built from this one inherit: a child on another model applies its own declaration when
-    it is built. Agents not built through ``_load_tools`` fall back to their current selection."""
-    recorded = getattr(agent, "__dict__", {})
-    if "_requested_enabled_toolsets" in recorded:
-        return recorded["_requested_enabled_toolsets"]
-    return getattr(agent, "enabled_toolsets", None)
-
-
 def _load_tools(agent, enabled_toolsets, disabled_toolsets):
     # The empty selection of a model that declares no tools also gates the memory-provider and
     # context-engine appenders that run later, through their existing enabled_toolsets checks. The
