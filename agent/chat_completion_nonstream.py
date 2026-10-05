@@ -2,7 +2,6 @@
 
 from agent import chat_completion_helpers as h
 from agent import chat_completion_wait_notice as wn
-from agent.session_activity import ActivityProvenance
 
 
 class _NonStreamRequest:
@@ -43,7 +42,6 @@ class _NonStreamRequest:
         self.call_start = h.time.time()
         self.wait_notice_started_ts = None
         self.wait_notice = wn.WaitNoticeState()
-        self.provider_progress = None
         self.thread = None
 
     def _install_codex_request_token(self) -> None:
@@ -137,32 +135,9 @@ class _NonStreamRequest:
         """Stream open on this attempt, but no substantive model progress yet."""
         return self.wd.progress_timeout > 0 and last_event_ts is not None and last_progress_ts is None
 
-    def _provider_progress(self):
-        """The latest progress the provider itself stamped during this request, or None.
-
-        ``run`` stamps the request start without that provenance, so an earlier request's
-        stamp never counts."""
-        agent, progress = self.agent, getattr(self, "provider_progress", None)  # __new__ doubles
-        if getattr(agent, "_last_activity_provenance", None) == ActivityProvenance.PROVIDER_PROGRESS:
-            progress = self.provider_progress = getattr(agent, "_last_activity_desc", "") or progress
-        return progress
-
     def _emit_wait_notice(self, elapsed: float, *, heartbeat: bool = True) -> None:
         wd = self.wd
         try:
-            progress = self._provider_progress()
-            if progress:
-                # A provider that reports its own progress owns the status text; silence between
-                # its reports (a long tool run) is not a provider wait. The heartbeat still keeps
-                # liveness fresh on the same cadence, carrying the provider's description.
-                if self.wait_notice_started_ts is not None:
-                    self.agent._emit_wait_notice("")
-                    self.wait_notice_started_ts = None
-                    self.wait_notice.reset()
-                    heartbeat = True  # the clear blanked the description: restore it now
-                if heartbeat:
-                    self.agent._touch_activity(progress, provenance=ActivityProvenance.PROVIDER_PROGRESS)
-                return
             last_event_ts, last_progress_ts, retry_started_ts, attempt_started_ts = self._codex_watchdog_snapshot()
             pre_progress = self._pre_progress(last_event_ts, last_progress_ts)
             activity_ts = attempt_started_ts if pre_progress else (
