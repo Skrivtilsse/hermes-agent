@@ -765,37 +765,6 @@ def recover_after_classification(
     return False, recovered_with_pool
 
 
-def nonreplayable_failure_result(
-    agent: Any, api_error: Exception, *, messages: List[Dict[str, Any]], conversation_history: Any,
-    api_call_count: int,
-) -> Dict[str, Any]:
-    """Terminal path for any failure once this user action has invoked a provider that does not
-    support automatic reinvocation (``agent/reinvocation_guard.py``): no retry, recovery, fallback or
-    compression — each would invoke it again. The original provider failure is what is reported (a
-    refusal carries it), classified by the usual pipeline but never retryable."""
-    from dataclasses import replace
-
-    from agent.reinvocation_guard import original_failure
-    from agent.turn_failure_copy import nonreplayable_failure_copy
-
-    shown = original_failure(api_error)
-    classified = replace(classify_api_error(
-        shown, provider=getattr(agent, "provider", "") or "", model=getattr(agent, "model", "") or "",
-        base_url=str(getattr(agent, "base_url", "") or ""),
-    ), retryable=False, should_fallback=False, should_compress=False, should_rotate_credential=False)
-    agent._flush_status_buffer()
-    summary = agent._summarize_api_error(shown)
-    label = provider_label_for(getattr(agent, "provider", ""))
-    agent._emit_diagnostic_status(f"❌ {label} failed after it started; not retried automatically: {summary}")
-    logger.error("%sNon-replayable provider failed after invocation began; turn ends without retry: %s",
-                 agent.log_prefix, shown)
-    agent._persist_session(messages, conversation_history)
-    result = _failed_turn_result(nonreplayable_failure_copy(label=label, summary=summary), messages,
-                                 api_call_count, summary)
-    result.update({"failure_reason": classified.reason.value, "failure_retryable": False})
-    return result
-
-
 def _failed_turn_result(final_response: str, messages: Any, api_call_count: int, error: str) -> Dict[str, Any]:
     """Base failed-turn result dict shared by the two terminal paths."""
     return {

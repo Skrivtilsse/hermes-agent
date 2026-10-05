@@ -40,7 +40,7 @@ from agent.turn_retry_state import TurnRetryState
 from agent.turn_api_call import handle_api_interrupt, nous_rate_limit_guard, perform_api_call
 from agent.turn_api_error import handle_api_error
 from agent.turn_api_request import build_api_request
-from agent.turn_failure_copy import FAILED_TURN_DISPLAY_KIND, failed_turn_notice, result_may_have_effects, site_copy
+from agent.turn_failure_copy import FAILED_TURN_DISPLAY_KIND, failed_turn_notice, site_copy
 from agent.turn_final_response import finish_text_response
 from agent.turn_finalizer import finalize_turn
 from agent.turn_iteration_prep import (
@@ -286,9 +286,6 @@ def _apply_active_turn_redirect(agent: Any, messages: List[Dict[str, Any]], text
     replayable content (inlined CoT reads as a prefill jailbreak and bricks the session with
     empty-response storms); the interruption scaffold is replay text carried only in the user
     correction's ``api_content``; an on-screen-empty placeholder is ``display_kind=hidden``."""
-    # The user's correction is a new explicit action: it may make one new provider invocation.
-    from agent.reinvocation_guard import authorize_user_correction
-    authorize_user_correction(agent)
     visible = agent._strip_think_blocks(getattr(agent, "_current_streamed_assistant_text", "") or "").strip()
 
     checkpoint_parts = [_INTERRUPT_SCAFFOLD_MARKER]
@@ -1632,12 +1629,9 @@ def run_conversation(
     ``{turn_id, current_turn_user_idx}`` pair is stamped beside the exact ``messages`` it
     addresses, after every history rewrite including post-turn micro-compaction.
     """
-    from agent.reinvocation_guard import begin_user_action, stamp_result
     from agent.turn_context import export_current_turn_boundary
     from tools.vision_tools_history_budget import native_turn_images
 
-    # Every run_conversation is one explicit user action for the reinvocation guard.
-    begin_user_action(agent)
     # Images attached natively to this user turn stay visible to vision_analyze for the turn, so
     # it does not embed the same pixels a second time into the same request (#76411).
     with native_turn_images(user_message):
@@ -1657,7 +1651,6 @@ def run_conversation(
             turn_author=turn_author,
         )
     result = export_current_turn_boundary(agent, result, user_message)
-    stamp_result(agent, result)
     _close_durable_failed_turn(agent, result)
     return result
 
@@ -1698,9 +1691,7 @@ def _close_durable_failed_turn(agent, result: Any) -> None:
         start = result.get("current_turn_user_idx")
         turn_messages = messages[start:] if isinstance(start, int) and 0 <= start < len(messages) else messages
         append_message(messages, {
-            "role": "assistant",
-            "content": failed_turn_notice(turn_messages, effects_possible=result_may_have_effects(result)),
-            "display_kind": FAILED_TURN_DISPLAY_KIND,
+            "role": "assistant", "content": failed_turn_notice(turn_messages), "display_kind": FAILED_TURN_DISPLAY_KIND,
         })
         agent._flush_messages_to_session_db(messages)
     except Exception:

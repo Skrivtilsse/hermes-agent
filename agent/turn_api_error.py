@@ -20,8 +20,7 @@ from agent.turn_overflow import recover_from_overflow
 from agent.turn_recovery import (
     _NONRETRYABLE_LABELS, abort_turn_on_interrupt, compute_error_backoff, interruptible_backoff_sleep,
     log_api_error_attempt,
-    max_retries_exhausted_result, nonreplayable_failure_result, nonretryable_client_error_result,
-    recover_after_classification,
+    max_retries_exhausted_result, nonretryable_client_error_result, recover_after_classification,
     recover_before_classification, route_classified_error,
 )
 
@@ -77,19 +76,6 @@ def handle_api_error(
         thinking_spinner = None
     if agent.thinking_callback:
         agent.thinking_callback("")
-
-    # Once this user action has invoked a provider that does not support automatic reinvocation,
-    # every recovery below would invoke it again: the failure is terminal (agent/reinvocation_guard.py).
-    # A user redirect is a new action, so it still restarts the turn from the correction.
-    from agent.reinvocation_guard import AutomaticReinvocationRefused, reinvocation_blocked
-    if isinstance(api_error, AutomaticReinvocationRefused) or reinvocation_blocked(agent):
-        if agent._interrupt_requested and agent.clear_interrupt(preserve_redirect=True):
-            _retry.restart_with_redirected_messages = True
-            return _verdict("break")
-        return _verdict("return", nonreplayable_failure_result(
-            agent, api_error, messages=messages, conversation_history=conversation_history,
-            api_call_count=api_call_count,
-        ))
 
     _recovered, active_system_prompt = recover_before_classification(
         agent, api_error, messages=messages, api_messages=api_messages, api_kwargs=api_kwargs,

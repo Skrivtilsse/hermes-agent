@@ -97,12 +97,6 @@ class ProviderProfile:
     # top-level fields rather than ignoring them.
     supports_prompt_cache_key: bool = False
 
-    # False for a stateful provider (an execution parent that may change files or remote state before
-    # it fails): it is invoked once per explicit user action, and Hermes never starts another physical
-    # main-provider call for that action automatically (retry, recovery, fallback, continuation,
-    # summary, whole-turn rerun). See ``agent/reinvocation_guard.py``. Auxiliary calls are unaffected.
-    supports_automatic_reinvocation: bool = True
-
     # Private replay carriers use a namespaced '<provider>.native_assistant' type
     # in reasoning_details. Only this profile may receive its matching carrier;
     # other providers (including an unregistered fallback) get ordinary details only.
