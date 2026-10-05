@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from hermes_constants import get_process_hermes_home
-from tools.environments.base import BaseEnvironment
+from tools.environments.base import _ADOPT_COMMAND_CWD, BaseEnvironment
 from tools.environments.base_output import _pipe_stdin
 from hermes_cli._subprocess_compat import windows_hide_flags
 from tools.environments.local_env_policy import (  # noqa: F401 — _HERMES_PROVIDER_ENV_BLOCKLIST stays importable from here
@@ -978,16 +978,22 @@ class LocalEnvironment(BaseEnvironment):
         """Base semantics plus: Git Bash ``pwd -P`` emits MSYS form on Windows —
         normalize to native and require the dir to exist, else ``_run_bash`` would
         warn every command. A stale path rolls back to the previous cwd, which this
-        command did not observe, so ``cwd_observed`` is dropped."""
+        command did not observe, so ``cwd_observed`` is dropped. Under ``keep_environment_cwd``
+        only the reported cwd is normalized: ``self.cwd`` is never written, so a concurrent
+        caller's newer cwd survives."""
         prev_cwd = self.cwd
         super()._extract_cwd_from_output(result)
-        if self.cwd != prev_cwd:
-            normalized = _msys_to_windows_path(self.cwd)
+        observed = result.get("cwd") if result.get("cwd_observed") else None
+        if observed and observed != prev_cwd:
+            adopted = _ADOPT_COMMAND_CWD.get()
+            normalized = _msys_to_windows_path(observed)
             if normalized and os.path.isdir(normalized):
-                self.cwd = normalized
                 result["cwd"] = normalized
+                if adopted:
+                    self.cwd = normalized
             else:
-                self.cwd = prev_cwd
+                if adopted:
+                    self.cwd = prev_cwd
                 result.pop("cwd_observed", None)
                 result.pop("cwd", None)
 
